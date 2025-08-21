@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '@/components/Layout';
-import { Camera, Upload, User, Mail, Lock, Save, X } from 'lucide-react';
+import { Camera, Upload, User, Mail, Lock, Save, X, Trash2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 interface UserProfile {
@@ -33,6 +33,7 @@ export default function AccountSettingsPage() {
   });
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [saving, setSaving] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -98,7 +99,7 @@ export default function AccountSettingsPage() {
     
     // Create FormData for file upload
     const formData = new FormData();
-    formData.append('image', file);
+    formData.append('photo', file);
     
     try {
       const response = await fetch('/api/auth/profile/photo', {
@@ -108,8 +109,8 @@ export default function AccountSettingsPage() {
       
       if (response.ok) {
         const result = await response.json();
-        setProfile(prev => prev ? { ...prev, profile_image: result.imageUrl } : null);
-        setShowPhotoOptions(false);
+        setProfile(prev => prev ? { ...prev, profile_image: result.profile_image } : null);
+        setPhotoUrl('');
       } else {
         console.error('Failed to upload photo');
       }
@@ -120,7 +121,7 @@ export default function AccountSettingsPage() {
     }
   };
 
-  const handlePhotoUrl = async () => {
+  const handlePhotoUrlSubmit = async () => {
     if (!photoUrl.trim()) return;
     
     setUploadingPhoto(true);
@@ -129,19 +130,19 @@ export default function AccountSettingsPage() {
       const response = await fetch('/api/auth/profile/photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl: photoUrl })
+        body: JSON.stringify({ photoUrl })
       });
       
       if (response.ok) {
         const result = await response.json();
-        setProfile(prev => prev ? { ...prev, profile_image: result.imageUrl } : null);
-        setShowPhotoOptions(false);
+        setProfile(prev => prev ? { ...prev, profile_image: result.profile_image } : null);
         setPhotoUrl('');
+        setShowPhotoOptions(false);
       } else {
-        console.error('Failed to update photo');
+        console.error('Failed to update photo URL');
       }
     } catch (error) {
-      console.error('Error updating photo:', error);
+      console.error('Error updating photo URL:', error);
     } finally {
       setUploadingPhoto(false);
     }
@@ -156,16 +157,16 @@ export default function AccountSettingsPage() {
     
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newErrors.email = 'Please enter a valid email address';
     }
     
     if (formData.newPassword) {
       if (!formData.currentPassword) {
-        newErrors.currentPassword = 'Current password is required to change password';
+        newErrors.currentPassword = 'Current password is required';
       }
       if (formData.newPassword.length < 6) {
-        newErrors.newPassword = 'New password must be at least 6 characters';
+        newErrors.newPassword = 'Password must be at least 6 characters';
       }
       if (formData.newPassword !== formData.confirmPassword) {
         newErrors.confirmPassword = 'Passwords do not match';
@@ -221,6 +222,58 @@ export default function AccountSettingsPage() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    // Get user ID from profile or useAuth hook
+    const userId = profile?.id || user?.id;
+    if (!userId) {
+      alert('Unable to identify user. Please refresh the page and try again.');
+      return;
+    }
+    
+    // Show confirmation dialog
+    const confirmed = confirm(
+      `Are you absolutely sure you want to delete your account?\n\n` +
+      `This action will:\n` +
+      `• Permanently delete your account\n` +
+      `• Remove all your workspaces, boards, lists, and cards\n` +
+      `• This action cannot be undone\n\n` +
+      `Type "DELETE" to confirm:`
+    );
+    
+    if (!confirmed) return;
+    
+    // Additional confirmation
+    const userInput = prompt('Please type "DELETE" to confirm account deletion:');
+    if (userInput !== 'DELETE') {
+      alert('Account deletion cancelled. Your account is safe.');
+      return;
+    }
+    
+    setDeletingAccount(true);
+    
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        // Account deleted successfully
+        alert('Your account has been permanently deleted. You will be redirected to the login page.');
+        // Redirect to login page
+        window.location.href = '/login';
+      } else {
+        const errorData = await response.json();
+        alert(`Failed to delete account: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      alert('An error occurred while deleting your account. Please try again.');
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -271,34 +324,32 @@ export default function AccountSettingsPage() {
                   onMouseEnter={() => setShowPhotoOptions(true)}
                   onMouseLeave={() => setShowPhotoOptions(false)}
                 >
-                  <div className="w-32 h-32 rounded-full border-4 border-white shadow-lg overflow-hidden bg-gray-100 relative group cursor-pointer">
-                    {profile?.profile_image ? (
-                      <img
-                        src={profile.profile_image}
-                        alt={profile.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center">
-                        <User size={48} {...({ className: "text-white" } as any)} />
-                      </div>
-                    )}
-                    
-                    {/* Hover Overlay */}
-                    <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Camera size={24} {...({ className: "text-white" } as any)} />
+                  {profile?.profile_image ? (
+                    <img
+                      src={profile.profile_image}
+                      alt={profile.name}
+                      className="w-32 h-32 rounded-full border-4 border-white shadow-lg object-cover"
+                    />
+                  ) : (
+                    <div className="w-32 h-32 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full border-4 border-white shadow-lg flex items-center justify-center">
+                      <User size={48} {...({ className: "text-white" } as any)} />
                     </div>
+                  )}
+                  
+                  {/* Hover Overlay */}
+                  <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex items-center justify-center">
+                    <Camera size={24} {...({ className: "text-white" } as any)} />
                   </div>
                   
                   {/* Photo Upload Options */}
                   {showPhotoOptions && (
-                    <div className="absolute top-full left-0 mt-2 bg-white rounded-lg shadow-lg border p-4 z-10 w-80">
-                      <h4 className="font-semibold text-gray-900 mb-3">Update Profile Photo</h4>
+                    <div className="absolute top-full left-0 mt-2 bg-white rounded-lg shadow-lg border p-3 z-10 w-64">
+                      <h4 className="font-semibold text-gray-900 mb-2 text-sm">Update Profile Photo</h4>
                       
                       {/* URL Upload */}
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Photo URL
+                      <div className="mb-3">
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Image URL
                         </label>
                         <div className="flex space-x-2">
                           <input
@@ -306,26 +357,25 @@ export default function AccountSettingsPage() {
                             value={photoUrl}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPhotoUrl(e.target.value)}
                             placeholder="Enter image URL..."
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                           />
                           <button
-                            onClick={handlePhotoUrl}
-                            disabled={uploadingPhoto || !photoUrl.trim()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={handlePhotoUrlSubmit}
+                            disabled={!photoUrl.trim() || uploadingPhoto}
+                            className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {uploadingPhoto ? '...' : 'Save'}
+                            {uploadingPhoto ? 'Saving...' : 'Save'}
                           </button>
                         </div>
                       </div>
                       
                       {/* File Upload */}
-                      <div className="border-t pt-3">
+                      <div className="border-t pt-2">
                         <button
                           onClick={() => fileInputRef.current?.click()}
-                          disabled={uploadingPhoto}
-                          className="w-full flex items-center justify-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                          className="w-full flex items-center justify-center space-x-1 px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 text-xs"
                         >
-                          <Upload size={16} />
+                          <Upload size={12} />
                           <span>Upload from Computer</span>
                         </button>
                         <input
@@ -341,11 +391,6 @@ export default function AccountSettingsPage() {
                       </div>
                     </div>
                   )}
-                </div>
-                
-                <div className="text-center">
-                  <h2 className="text-xl font-semibold text-gray-900">{profile?.name}</h2>
-                  <p className="text-gray-600">{profile?.email}</p>
                 </div>
               </div>
             </div>
@@ -517,6 +562,44 @@ export default function AccountSettingsPage() {
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+
+            {/* Danger Zone Section */}
+            <div className="bg-white rounded-lg shadow-sm border border-red-200 p-6 mt-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-red-700">Danger Zone</h3>
+                  <p className="text-sm text-red-600 mt-1">Irreversible and destructive actions</p>
+                </div>
+              </div>
+
+              <div className="border-t border-red-200 pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-md font-medium text-red-700">Delete Account</h4>
+                    <p className="text-sm text-red-600 mt-1">
+                      Once you delete your account, there is no going back. Please be certain.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={deletingAccount}
+                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                  >
+                    {deletingAccount ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Deleting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={16} />
+                        <span>Delete Account</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
