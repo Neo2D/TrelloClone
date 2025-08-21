@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = jwt.verify(token, JWT_SECRET!) as any;
 
     // Get user from database
     const users = await sql<User[]>`

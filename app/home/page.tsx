@@ -35,6 +35,7 @@ export default function HomePage() {
   const [boardName, setBoardName] = useState('');
   const [hoveredWorkspace, setHoveredWorkspace] = useState<number | null>(null);
   const [workspaceImageUrl, setWorkspaceImageUrl] = useState('');
+  const [deletingBoards, setDeletingBoards] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -120,6 +121,36 @@ export default function HomePage() {
       }
     } catch (error) {
       console.error('Error creating board:', error);
+    }
+  };
+
+  const deleteBoard = async (boardId: number) => {
+    if (!selectedWorkspace) return;
+
+    // Add board to deleting state
+    setDeletingBoards(prev => new Set(prev).add(boardId));
+
+    try {
+      const response = await fetch(`/api/boards/${boardId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (response.ok) {
+        // Remove the deleted board from the current state
+        setBoards(prevBoards => prevBoards.filter(board => board.id !== boardId));
+      } else {
+        console.error('Failed to delete board:', response.status);
+      }
+    } catch (error) {
+      console.error('Error deleting board:', error);
+    } finally {
+      // Remove board from deleting state
+      setDeletingBoards(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(boardId);
+        return newSet;
+      });
     }
   };
 
@@ -354,14 +385,42 @@ export default function HomePage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {boards.map((board) => (
-                    <a
+                    <div
                       key={board.id}
-                      href={`/board/${board.id}`}
-                      className="block p-6 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                      className="relative group"
                     >
-                      <h3 className="text-xl font-semibold mb-2">{board.name}</h3>
-                      <p className="text-blue-100">Click to open board</p>
-                    </a>
+                      <a
+                        href={`/board/${board.id}`}
+                        className="block p-6 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105 relative"
+                      >
+                        <h3 className="text-xl font-semibold mb-2">{board.name}</h3>
+                        <p className="text-blue-100">Click to open board</p>
+                      </a>
+                      
+                      {/* Delete Button - appears on hover */}
+                      <button
+                        onClick={(e: React.MouseEvent) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (confirm(`Are you sure you want to delete "${board.name}"?\n\nThis will permanently delete the board and all its lists and cards. This action cannot be undone.`)) {
+                            deleteBoard(board.id);
+                          }
+                        }}
+                        disabled={deletingBoards.has(board.id)}
+                        className={`absolute top-2 right-2 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 shadow-lg hover:scale-110 transform transition-transform ${
+                          deletingBoards.has(board.id) 
+                            ? 'bg-gray-400 cursor-not-allowed' 
+                            : 'bg-red-500 hover:bg-red-600'
+                        }`}
+                        title={deletingBoards.has(board.id) ? 'Deleting...' : `Delete ${board.name}`}
+                      >
+                        {deletingBoards.has(board.id) ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                      </button>
+                    </div>
                   ))}
                   
                   {boards.length === 0 && (

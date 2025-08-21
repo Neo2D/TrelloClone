@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '@/components/Layout';
-import { Plus, X, Edit3, Trash2, GripVertical } from 'lucide-react';
+import { Plus, X, Edit3, Trash2, GripVertical, RefreshCw } from 'lucide-react';
 
 interface Card {
   id: number;
@@ -68,6 +68,21 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
     fetchUser();
   }, [boardId]);
 
+  // Additional effect to clean up invalid cards after initial load
+  useEffect(() => {
+    if (lists.length > 0) {
+      // Check if any cards have invalid IDs and refresh if needed
+      const hasInvalidCards = lists.some(list => 
+        list.cards?.some(card => card.id > 2147483647)
+      );
+      
+      if (hasInvalidCards) {
+        console.log('Found invalid cards, refreshing data...');
+        refreshBoardData();
+      }
+    }
+  }, [lists]);
+
   const fetchUser = async () => {
     try {
       const response = await fetch('/api/auth/profile');
@@ -99,27 +114,45 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
     }
   };
 
+  // Refresh board data to clean up any invalid cards
+  const refreshBoardData = () => {
+    console.log('Refreshing board data to clean up invalid cards...');
+    fetchLists();
+  };
+
+  // Fetch lists for the board
   const fetchLists = async () => {
     try {
-      const response = await fetch(`/api/boards/${boardId}/lists`);
+      const response = await fetch(`/api/boards/${boardId}/lists`, {
+        credentials: 'include'
+      });
+      
       if (response.ok) {
         const listsData = await response.json();
         
         // Sort lists by position to maintain order
         const sortedLists = listsData.sort((a: List, b: List) => a.position - b.position);
         
-
-        
         // Fetch cards for each list
         const listsWithCards = await Promise.all(
           sortedLists.map(async (list: List) => {
             try {
-              const cardsResponse = await fetch(`/api/lists/${list.id}/cards`);
+              const cardsResponse = await fetch(`/api/lists/${list.id}/cards`, {
+                credentials: 'include'
+              });
               if (cardsResponse.ok) {
                 const cards = await cardsResponse.json();
                 // Sort cards by position within each list
                 const sortedCards = cards.sort((a: Card, b: Card) => a.position - b.position);
-                return { ...list, cards: sortedCards };
+                
+                // Clean up any cards with invalid IDs (IDs that are too large for PostgreSQL)
+                const cleanedCards = sortedCards.filter((card: Card) => {
+                  // PostgreSQL integer max value is 2,147,483,647
+                  const maxValidId = 2147483647;
+                  return card.id && card.id <= maxValidId;
+                });
+                
+                return { ...list, cards: cleanedCards };
               }
               return { ...list, cards: [] };
             } catch (error) {
@@ -129,6 +162,7 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
           })
         );
         
+        console.log('Fetched lists with cards:', listsWithCards);
         setLists(listsWithCards);
       }
     } catch (error) {
@@ -249,12 +283,15 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
       });
 
       if (response.ok) {
-        // Update frontend state directly instead of refetching
-        const newCard = { id: Date.now(), title: newCardTitle, list_id: listId, position: 0, cards: [] };
+        // Get the actual card data from the response
+        const newCardData = await response.json();
+        console.log('Created card response:', newCardData);
+        
+        // Update frontend state with the real card data
         setLists(prevLists => 
           prevLists.map(list => 
             list.id === listId 
-              ? { ...list, cards: [...(list.cards || []), newCard] }
+              ? { ...list, cards: [...(list.cards || []), newCardData] }
               : list
           )
         );
@@ -357,14 +394,22 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
       // Calculate new position - ensure it's valid
       let newPosition = 0;
       if (targetList.cards && targetList.cards.length > 0) {
-        // Find the highest position and add 1
-        newPosition = Math.max(...targetList.cards.map(c => c.position || 0)) + 1;
+        // Find the highest position and add 1, with fallback
+        const positions = targetList.cards.map(c => c.position || 0);
+        newPosition = Math.max(...positions) + 1;
       }
       
-      console.log('Position calculation:', {
-        targetListCards: targetList.cards?.length || 0,
-        calculatedPosition: newPosition
-      });
+      // Ensure position is a valid number
+      if (isNaN(newPosition) || newPosition < 0) {
+        newPosition = 0;
+      }
+      
+      // Additional validation: ensure position is a reasonable number
+      if (newPosition > 1000) {
+        newPosition = 0;
+      }
+      
+
 
       // Optimistically update the UI first
       setLists(prevLists => {
@@ -387,20 +432,10 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
         });
       });
 
-      // Debug: Check if we have authentication cookies
-      console.log('Moving card with credentials:', {
-        cardId: draggedCard.id,
-        fromListId: draggedCard.list_id,
-        toListId: targetListId,
-        hasCredentials: 'include'
-      });
-
-      // Debug: Log the request details
       const requestBody = { 
         list_id: targetListId,
         position: newPosition
       };
-      console.log('Moving card with request:', requestBody);
 
       const response = await fetch(`/api/cards/${draggedCard.id}`, {
         method: 'PATCH',
@@ -419,13 +454,37 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
         try {
           const errorData = await response.text();
           console.error('Error response body:', errorData);
+          console.error('Full error details:', {
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: errorData
+          });
         } catch (e) {
-          console.error('Could not read error response');
+          console.error('Could not read error response:', e);
         }
         
-        // Revert to original state if the move failed
-        setLists(originalLists);
-        console.log('Reverted to original state due to API failure');
+        // Try fallback: update only list_id without position
+        console.log('Trying fallback update without position...');
+        const fallbackResponse = await fetch(`/api/cards/${draggedCard.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ 
+            list_id: targetListId
+            // No position field
+          })
+        });
+        
+        if (fallbackResponse.ok) {
+          console.log('Fallback update successful');
+          // Keep the updated state
+        } else {
+          console.error('Fallback update also failed:', fallbackResponse.status);
+          // Revert to original state if both attempts failed
+          setLists(originalLists);
+          console.log('Reverted to original state due to API failure');
+        }
       }
     } catch (error) {
       console.error('Error moving card:', error);
@@ -555,30 +614,41 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
             )}
             
             {/* Board Name */}
-            {editingBoardName ? (
-              <input
-                type="text"
-                value={editBoardName}
-                onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setEditBoardName(e.target.value)}
-                onBlur={() => updateBoard(editBoardName)}
-                onKeyDown={(e: React.KeyboardEvent) => {
-                  if (e.key === 'Enter') updateBoard(editBoardName);
-                  if (e.key === 'Escape') setEditingBoardName(false);
-                }}
-                className="text-3xl font-bold mb-2 bg-transparent border-b-2 border-white text-white placeholder-blue-100 focus:outline-none"
-                autoFocus
-              />
-            ) : (
-              <h1 
-                className="text-3xl font-bold mb-2 cursor-pointer hover:bg-white hover:bg-opacity-10 rounded px-2 py-1 transition-colors inline-block"
-                onClick={() => {
-                  setEditingBoardName(true);
-                  setEditBoardName(board?.name || '');
-                }}
+            <div className="flex items-center space-x-4">
+              {editingBoardName ? (
+                <input
+                  type="text"
+                  value={editBoardName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setEditBoardName(e.target.value)}
+                  onBlur={() => updateBoard(editBoardName)}
+                  onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === 'Enter') updateBoard(editBoardName);
+                    if (e.key === 'Escape') setEditingBoardName(false);
+                  }}
+                  className="text-3xl font-bold mb-2 bg-transparent border-b-2 border-white text-white placeholder-blue-100 focus:outline-none"
+                  autoFocus
+                />
+              ) : (
+                <h1 
+                  className="text-3xl font-bold mb-2 cursor-pointer hover:bg-white hover:bg-opacity-10 rounded px-2 py-1 transition-colors inline-block"
+                  onClick={() => {
+                    setEditingBoardName(true);
+                    setEditBoardName(board?.name || '');
+                  }}
+                >
+                  {board?.name || 'Loading...'}
+                </h1>
+              )}
+              
+              {/* Refresh Button */}
+              <button
+                onClick={refreshBoardData}
+                className="p-2 text-white hover:bg-white hover:bg-opacity-10 rounded transition-colors"
+                title="Refresh board data and clean up invalid cards"
               >
-                {board?.name || 'Loading...'}
-              </h1>
-            )}
+                <RefreshCw size={20} {...({ className: "text-white" } as any)} />
+              </button>
+            </div>
           </div>
         </div>
 

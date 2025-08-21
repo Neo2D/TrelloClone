@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       
       // For now, we'll just return a placeholder since we don't have file storage set up
       // In a real app, you would upload to AWS S3, Cloudinary, etc.
-      imageUrl = `https://via.placeholder.com/150x150/4F46E5/FFFFFF?text=${encodeURIComponent(user.name.charAt(0).toUpperCase())}`;
+      imageUrl = `https://via.placeholder.com/150x150/4F46E5/FFFFFF?text=${encodeURIComponent(user.email.charAt(0).toUpperCase())}`;
       
       // TODO: Implement actual file upload to cloud storage
       console.log('File upload received:', {

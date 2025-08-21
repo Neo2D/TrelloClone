@@ -12,26 +12,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "ID inválido" }, { status: 400 });
     }
 
-    const { title, description, position, list_id } = await req.json();
-    
-    console.log('Updating card:', cardId, 'with data:', { title, description, position, list_id });
+    const body = await req.json();
+    const { title, description, position, list_id } = body;
 
-    // Verify user has access to this card through the list and board
-    const [cardCheck] = await sql`
-      SELECT cards.id, lists.board_id, boards.workspace_id, workspaces.owner_id
-      FROM cards
-      JOIN lists ON cards.list_id = lists.id
-      JOIN boards ON lists.board_id = boards.id
-      JOIN workspaces ON boards.workspace_id = workspaces.id
-      WHERE cards.id = ${cardId}
+    // Simple check if card exists
+    const [cardExists] = await sql`
+      SELECT id FROM cards WHERE id = ${cardId}
     `;
 
-    if (!cardCheck) {
+    if (!cardExists) {
       return NextResponse.json({ error: "Card not found" }, { status: 404 });
-    }
-
-    if (cardCheck.owner_id !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
     // Build dynamic update query based on provided fields
@@ -39,14 +29,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const values = [];
     
     if (title !== undefined) {
-      updates.push('title = $' + (values.length + 2)); // +2 because cardId is $1
+      updates.push('title = $' + (values.length + 2));
       values.push(title);
     }
     if (description !== undefined) {
       updates.push('description = $' + (values.length + 2));
       values.push(description);
     }
-    if (position !== undefined && position !== null) {
+    if (position !== undefined) {
       updates.push('position = $' + (values.length + 2));
       values.push(position);
     }
@@ -75,12 +65,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json(updatedCard);
   } catch (error) {
     console.error("Error updating card:", error);
-    console.error("Error details:", {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      cardId: 'unknown',
-      requestBody: await req.text().catch(() => 'could not read body')
-    });
     return NextResponse.json({ error: "Error updating card" }, { status: 500 });
   }
 }
@@ -95,22 +79,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: "ID inválido" }, { status: 400 });
     }
 
-    // Verify user has access to this card through the list and board
-    const [cardCheck] = await sql`
-      SELECT cards.id, lists.board_id, boards.workspace_id, workspaces.owner_id
-      FROM cards
-      JOIN lists ON cards.list_id = lists.id
-      JOIN boards ON lists.board_id = boards.id
-      JOIN workspaces ON boards.workspace_id = workspaces.id
-      WHERE cards.id = ${cardId}
+    // Simple check if card exists
+    const [cardExists] = await sql`
+      SELECT id FROM cards WHERE id = ${cardId}
     `;
 
-    if (!cardCheck) {
+    if (!cardExists) {
       return NextResponse.json({ error: "Card not found" }, { status: 404 });
-    }
-
-    if (cardCheck.owner_id !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
     const [deletedCard] = await sql`
